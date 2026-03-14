@@ -1,0 +1,14 @@
+{
+  "name": "cupons",
+  "version": "1.0.0",
+  "description": "Chrome extension to test coupons on e-commerce sites",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.content.json",
+    "watch": "tsc -p tsconfig.json --watch & tsc -p tsconfig.content.json --watch",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.268",
+    "typescript": "^5.4.5"
+  }
+}

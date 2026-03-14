@@ -1,0 +1,118 @@
+{
+  "extName": {
+    "message": "Testador de Cupões",
+    "description": "Extension name"
+  },
+  "extDescription": {
+    "message": "Teste e aplique cupões em lojas online",
+    "description": "Extension description"
+  },
+  "couponLabel": {
+    "message": "Código do Cupão",
+    "description": "Label for coupon input"
+  },
+  "inputPlaceholder": {
+    "message": "Introduza o código do cupão...",
+    "description": "Placeholder for coupon input"
+  },
+  "testButton": {
+    "message": "Testar Cupão",
+    "description": "Button to test a coupon"
+  },
+  "statusIdle": {
+    "message": "Pronto para testar cupões.",
+    "description": "Idle status message"
+  },
+  "statusApplying": {
+    "message": "A aplicar cupão...",
+    "description": "Status when applying a coupon"
+  },
+  "statusSuccess": {
+    "message": "Cupão aplicado com sucesso!",
+    "description": "Success status"
+  },
+  "statusNotFound": {
+    "message": "Campo de cupão não encontrado nesta página.",
+    "description": "Status when coupon field is not found"
+  },
+  "statusError": {
+    "message": "Ocorreu um erro ao aplicar o cupão.",
+    "description": "Error status"
+  },
+  "statusEmpty": {
+    "message": "Por favor, introduza um código de cupão.",
+    "description": "Status when coupon input is empty"
+  },
+  "historyTitle": {
+    "message": "Recentes",
+    "description": "History section title"
+  },
+  "clearHistory": {
+    "message": "Limpar",
+    "description": "Clear history button"
+  },
+  "feedbackLabel": {
+    "message": "Esta execução foi correta?",
+    "description": "Feedback row label"
+  },
+  "feedbackGood": {
+    "message": "👍 Sim",
+    "description": "Feedback good button"
+  },
+  "feedbackBad": {
+    "message": "👎 Não",
+    "description": "Feedback bad button"
+  },
+  "notesLabel": {
+    "message": "O que correu mal? (usado como contexto na próxima execução)",
+    "description": "Notes textarea label"
+  },
+  "notesSubmit": {
+    "message": "Guardar e Fechar",
+    "description": "Notes submit button"
+  },
+  "statusInconsistent": {
+    "message": "Execuções inconsistentes: $1 vs $2",
+    "description": "Warning when the two test runs produced different results",
+    "placeholders": {
+      "1": { "content": "$1" },
+      "2": { "content": "$2" }
+    }
+  },
+  "statusRejected": {
+    "message": "Cupão rejeitado pela loja.",
+    "description": "Status when coupon was submitted but rejected"
+  },
+  "plansTitle": {
+    "message": "Planos Guardados",
+    "description": "Plans section title"
+  },
+  "clearPlans": {
+    "message": "Limpar",
+    "description": "Clear plans button"
+  },
+  "deletePlan": {
+    "message": "Eliminar este plano",
+    "description": "Delete plan button title"
+  },
+  "statusGeneratingPlan": {
+    "message": "A gerar plano de execução…",
+    "description": "Status while generating plan"
+  },
+  "statusPlanSaved": {
+    "message": "Plano de execução guardado!",
+    "description": "Status after plan is saved"
+  },
+  "ollamaSection": {
+    "message": "Modo IA (ollama)",
+    "description": "Ollama section title"
+  },
+  "ollamaButton": {
+    "message": "TEST",
+    "description": "Mock test button for ollama AI coupon detection"
+  },
+  "ollamaNotRunning": {
+    "message": "ollama não está em execução. Inicie com: ollama serve",
+    "description": "Message when ollama is not reachable"
+  }
+}
