@@ -7,6 +7,8 @@ const historySection = document.getElementById("history-section");
 const clearBtn = document.getElementById("clear-btn");
 const ollamaBtn = document.getElementById("ollama-btn");
 const collectBtn = document.getElementById("collect-btn");
+const testBtn = document.getElementById("test-btn");
+const stopBtn = document.getElementById("stop-btn");
 const modelSelect = document.getElementById("model-select");
 const modelStatus = document.getElementById("model-status");
 const feedbackRow = document.getElementById("feedback-row");
@@ -30,11 +32,19 @@ feedbackGood.textContent = i18n("feedbackGood");
 feedbackBad.textContent = i18n("feedbackBad");
 notesSubmit.textContent = i18n("notesSubmit");
 collectBtn.textContent = i18n("collectCoupons");
-ollamaBtn.textContent = i18n("testRun");
+ollamaBtn.textContent = i18n("buildPlan");
+testBtn.textContent = i18n("testCoupons");
+stopBtn.title = i18n("stopRun");
 function setStatus(msg, level = "info") {
     statusEl.textContent = msg;
     statusEl.className = level === "info" ? "" : level;
     chrome.storage.session.set({ popup_status: { text: msg, level } });
+}
+function isSyntheticTestCode(code) {
+    return /^TEST[A-Z0-9]{6}$/i.test(code);
+}
+function showStopButton(show) {
+    stopBtn.classList.toggle("hidden", !show);
 }
 // ── Helpers ───────────────────────────────────────────────────────────────
 function randomCouponCode() {
@@ -134,6 +144,9 @@ async function renderHistory() {
             const badgeText = entry.result === "success" ? "✓" : entry.result === "rejected" ? "✗" : "?";
             badge.className = `badge ${badgeClass}`;
             badge.textContent = badgeText;
+            if ((entry.result === "rejected" || entry.result === "error") && entry.reason) {
+                badge.title = entry.reason;
+            }
             li.append(code, badge);
         }
         else {
@@ -157,6 +170,7 @@ collectBtn.addEventListener("click", async () => {
     hideFeedback();
     hideNotes();
     collectBtn.disabled = true;
+    showStopButton(true);
     setStatus(i18n("statusCollectingCoupons"), "info");
     try {
         const res = await chrome.runtime.sendMessage({ type: "COLLECT_COUPONS", hostname });
@@ -170,11 +184,63 @@ collectBtn.addEventListener("click", async () => {
     }
     catch (err) {
         console.error("[Coupon Tester] collect coupons failed:", err);
-        setStatus(i18n("statusCollectCouponsError"), "error");
+        const detail = err instanceof Error ? err.message : String(err);
+        setStatus(`${i18n("statusCollectCouponsError")} (${detail})`, "error");
     }
     finally {
         collectBtn.disabled = false;
+        showStopButton(false);
     }
+});
+testBtn.addEventListener("click", async () => {
+    const model = modelSelect.value;
+    if (!model) {
+        setStatus(i18n("ollamaNotRunning"), "error");
+        return;
+    }
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.id || !tab.url) {
+        setStatus(i18n("statusError"), "error");
+        return;
+    }
+    let hostname = null;
+    try {
+        hostname = new URL(tab.url).hostname;
+    }
+    catch { /* ignore */ }
+    if (!hostname) {
+        setStatus(i18n("statusError"), "error");
+        return;
+    }
+    hideFeedback();
+    hideNotes();
+    ollamaBtn.disabled = true;
+    collectBtn.disabled = true;
+    testBtn.disabled = true;
+    showStopButton(true);
+    setStatus(i18n("statusTestingCoupons"), "info");
+    const port = chrome.runtime.connect({ name: "ai-session" });
+    port.onMessage.addListener((msg) => {
+        if (msg.type === "STATUS") {
+            setStatus(msg.message, msg.level);
+        }
+        else if (msg.type === "BATCH_DONE") {
+            setStatus(i18n("statusTestCouponsDone", [String(msg.tested), String(msg.good), String(msg.bad), String(msg.errors)]), msg.errors > 0 ? "warning" : "success");
+            renderHistory();
+            ollamaBtn.disabled = false;
+            collectBtn.disabled = false;
+            testBtn.disabled = false;
+            showStopButton(false);
+            port.disconnect();
+        }
+    });
+    port.onDisconnect.addListener(() => {
+        ollamaBtn.disabled = false;
+        collectBtn.disabled = false;
+        testBtn.disabled = false;
+        showStopButton(false);
+    });
+    chrome.runtime.sendMessage({ type: "TEST_COUPONS", model, tabId: tab.id, hostname });
 });
 // ── Feedback row ──────────────────────────────────────────────────────────
 function showFeedback() { feedbackRow.classList.remove("hidden"); chrome.storage.session.set({ popup_feedback: true }); }
@@ -182,9 +248,15 @@ function hideFeedback() { feedbackRow.classList.add("hidden"); chrome.storage.se
 function showNotes() { notesRow.classList.remove("hidden"); notesInput.focus(); }
 function hideNotes() { notesRow.classList.add("hidden"); notesInput.value = ""; }
 function handleDone(msg, hostname) {
-    addToHistory(hostname, { code: msg.code, result: msg.result });
-    if (msg.code2 && msg.code2 !== msg.code) {
-        addToHistory(hostname, { code: msg.code2, result: msg.inconsistent && msg.run1Result ? msg.run1Result : msg.result });
+    if (!isSyntheticTestCode(msg.code)) {
+        addToHistory(hostname, { code: msg.code, result: msg.result, reason: msg.reason });
+    }
+    if (msg.code2 && msg.code2 !== msg.code && !isSyntheticTestCode(msg.code2)) {
+        addToHistory(hostname, {
+            code: msg.code2,
+            result: msg.inconsistent && msg.run1Result ? msg.run1Result : msg.result,
+            reason: msg.reason2 ?? msg.reason,
+        });
     }
     const inconsistencySuffix = msg.inconsistent && msg.run1Result
         ? ` ⚠ ${i18n("statusInconsistent", [msg.run1Result, msg.result])}`
@@ -335,6 +407,8 @@ ollamaBtn.addEventListener("click", async () => {
     hideNotes();
     ollamaBtn.disabled = true;
     collectBtn.disabled = true;
+    testBtn.disabled = true;
+    showStopButton(true);
     setStatus(i18n("statusApplying"), "info");
     // Pick up any correction notes left from a previous bad run, then clear them
     const notesKey = `correction_notes_${hostname}`;
@@ -351,12 +425,16 @@ ollamaBtn.addEventListener("click", async () => {
             handleDone(msg, hostname);
             ollamaBtn.disabled = false;
             collectBtn.disabled = false;
+            testBtn.disabled = false;
+            showStopButton(false);
             port.disconnect();
         }
     });
     port.onDisconnect.addListener(() => {
         ollamaBtn.disabled = false;
         collectBtn.disabled = false;
+        testBtn.disabled = false;
+        showStopButton(false);
     });
     chrome.runtime.sendMessage({ type: "RUN_AI", model, couponCode: code, couponCode2: code2, tabId: tab.id, hostname, correctionNotes: correctionNotes || undefined });
 });
@@ -379,6 +457,8 @@ async function init() {
     if (saved.session_running === true) {
         ollamaBtn.disabled = true;
         collectBtn.disabled = true;
+        testBtn.disabled = true;
+        showStopButton(true);
         const port = chrome.runtime.connect({ name: "ai-session" });
         port.onMessage.addListener((msg) => {
             if (msg.type === "STATUS") {
@@ -393,6 +473,17 @@ async function init() {
                     handleDone(msg, h); });
                 ollamaBtn.disabled = false;
                 collectBtn.disabled = false;
+                testBtn.disabled = false;
+                showStopButton(false);
+                port.disconnect();
+            }
+            else if (msg.type === "BATCH_DONE") {
+                setStatus(i18n("statusTestCouponsDone", [String(msg.tested), String(msg.good), String(msg.bad), String(msg.errors)]), msg.errors > 0 ? "warning" : "success");
+                renderHistory();
+                ollamaBtn.disabled = false;
+                collectBtn.disabled = false;
+                testBtn.disabled = false;
+                showStopButton(false);
                 port.disconnect();
             }
             else if (msg.type === "PLAN_SAVED") {
@@ -404,11 +495,26 @@ async function init() {
         port.onDisconnect.addListener(() => {
             ollamaBtn.disabled = false;
             collectBtn.disabled = false;
+            testBtn.disabled = false;
+            showStopButton(false);
         });
+    }
+    else {
+        showStopButton(false);
     }
     loadModels();
     renderHistory();
     renderPlans();
 }
 init();
+stopBtn.addEventListener("click", async () => {
+    stopBtn.disabled = true;
+    setStatus(i18n("statusStopping"), "warning");
+    try {
+        await chrome.runtime.sendMessage({ type: "STOP_SESSION" });
+    }
+    finally {
+        stopBtn.disabled = false;
+    }
+});
 //# sourceMappingURL=popup.js.map

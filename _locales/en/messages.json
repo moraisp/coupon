@@ -119,6 +119,14 @@
     "message": "Collect Coupons",
     "description": "Button to collect coupons from Pelando for current site"
   },
+  "buildPlan": {
+    "message": "Build Plan",
+    "description": "Button to build or refine the execution plan"
+  },
+  "testCoupons": {
+    "message": "Test Coupons",
+    "description": "Button to test all collected coupons"
+  },
   "testRun": {
     "message": "TEST RUN",
     "description": "Button to run the AI coupon test"
@@ -138,5 +146,27 @@
   "statusCollectCouponsError": {
     "message": "Failed to collect coupons from Pelando.",
     "description": "Status shown when coupon collection fails"
+  },
+  "statusTestingCoupons": {
+    "message": "Testing collected coupons...",
+    "description": "Status while batch testing collected coupons"
+  },
+  "statusTestCouponsDone": {
+    "message": "Batch done: tested $1, good $2, bad $3, errors $4.",
+    "description": "Status after batch testing coupons",
+    "placeholders": {
+      "1": { "content": "$1" },
+      "2": { "content": "$2" },
+      "3": { "content": "$3" },
+      "4": { "content": "$4" }
+    }
+  },
+  "stopRun": {
+    "message": "Stop",
+    "description": "Tooltip for stop current run button"
+  },
+  "statusStopping": {
+    "message": "Stopping current operation...",
+    "description": "Status while user requests stop"
   }
 }

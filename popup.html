@@ -147,11 +147,13 @@
     .actions-row {
       display: flex;
       gap: 8px;
+      flex-wrap: wrap;
     }
 
     .actions-row .btn-ai {
       width: auto;
       flex: 1;
+      min-width: 90px;
     }
 
     .btn-collect {
@@ -182,6 +184,30 @@
       min-height: 36px;
       display: flex;
       align-items: center;
+      flex: 1;
+    }
+
+    .status-row {
+      display: flex;
+      gap: 6px;
+      align-items: stretch;
+    }
+
+    .btn-stop {
+      width: 36px;
+      min-width: 36px;
+      padding: 0;
+      border: 1px solid #fecaca;
+      border-radius: 6px;
+      background: #fee2e2;
+      color: #b91c1c;
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .btn-stop:hover {
+      background: #fecaca;
     }
 
     #status.success {
@@ -412,11 +438,15 @@
     </div>
 
     <div class="actions-row">
+      <button class="btn-ai" id="ollama-btn">Build Plan</button>
       <button class="btn-collect" id="collect-btn">Collect Coupons</button>
-      <button class="btn-ai" id="ollama-btn">TEST RUN</button>
+      <button class="btn-ai" id="test-btn">Test Coupons</button>
     </div>
 
-    <div id="status"></div>
+    <div class="status-row">
+      <div id="status"></div>
+      <button class="btn-stop hidden" id="stop-btn" title="Stop">■</button>
+    </div>
 
     <div id="feedback-row" class="feedback-row hidden">
       <span class="section-title" id="feedback-label"></span>

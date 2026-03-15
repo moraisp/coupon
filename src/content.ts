@@ -224,9 +224,73 @@ function getPageText(): string {
   const texts: string[] = [];
   for (const { doc, frameIdx } of getAccessibleDocs()) {
     const t = (doc.body?.innerText ?? "").replace(/\s+/g, " ").trim().slice(0, 1500);
-    if (t) texts.push(frameIdx === 0 ? t : `[frame ${frameIdx}] ${t}`);
+
+    const toastSelectors = [
+      "[role='alert']",
+      "[aria-live]",
+      "[class*='toast']",
+      "[class*='snackbar']",
+      "[data-testid*='toast']",
+      "[data-testid*='alert']",
+    ].join(",");
+
+    const toastText = Array.from(doc.querySelectorAll<HTMLElement>(toastSelectors))
+      .map((el) => (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim())
+      .filter(Boolean)
+      .slice(0, 8)
+      .join(" | ");
+
+    const merged = [t, toastText ? `TOAST: ${toastText}` : ""].filter(Boolean).join(" || ").slice(0, 1800);
+    if (merged) texts.push(frameIdx === 0 ? merged : `[frame ${frameIdx}] ${merged}`);
   }
   return texts.join("\n---\n");
+}
+
+// ── Tool: scrape_pelando_coupons ────────────────────────────────────────
+
+function scrapePelandoCoupons(): { codes: string[]; title: string; url: string } {
+  const codes = new Set<string>();
+
+  const maskedEls = Array.from(document.querySelectorAll<HTMLElement>("[data-masked]"));
+  maskedEls.forEach((el) => {
+    const raw = (el.getAttribute("data-masked") ?? "").trim().toUpperCase();
+    if (raw.length >= 4 && raw.length <= 40 && /^[A-Z0-9-]+$/.test(raw)) {
+      codes.add(raw);
+    }
+  });
+
+  const text = (document.body?.innerText ?? "").replace(/\s+/g, " ");
+  const visibleCodeRegex = /(?:pegar\s+cupom|cupom(?:\s+de\s+desconto)?)[\s:]+([a-z0-9-]{4,40})/gi;
+  let match: RegExpExecArray | null;
+  while ((match = visibleCodeRegex.exec(text)) !== null) {
+    const code = match[1].trim().toUpperCase();
+    if (/^[A-Z0-9-]+$/.test(code)) {
+      codes.add(code);
+    }
+  }
+
+  return { codes: Array.from(codes), title: document.title, url: location.href };
+}
+
+function scrapePelandoStoreLinks(): { links: string[]; title: string; url: string } {
+  const links = new Set<string>();
+  const anchors = Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href*="/cupons-de-descontos/"]'));
+
+  anchors.forEach((a) => {
+    const href = (a.getAttribute("href") ?? "").trim();
+    if (!href) return;
+    try {
+      const abs = new URL(href, location.origin);
+      if (!abs.pathname.startsWith("/cupons-de-descontos/")) return;
+      const slug = abs.pathname.replace(/^\/cupons-de-descontos\/?/, "").replace(/\/$/, "");
+      if (!slug) return;
+      links.add(abs.toString());
+    } catch {
+      // Ignore invalid hrefs.
+    }
+  });
+
+  return { links: Array.from(links), title: document.title, url: location.href };
 }
 
 // ── Message listener ──────────────────────────────────────────────────────
@@ -260,6 +324,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
     case "GET_PAGE_TEXT":
       sendResponse(getPageText());
+      return false;
+
+    case "SCRAPE_PELANDO_COUPONS":
+      sendResponse(scrapePelandoCoupons());
+      return false;
+
+    case "SCRAPE_PELANDO_STORE_LINKS":
+      sendResponse(scrapePelandoStoreLinks());
       return false;
   }
 });

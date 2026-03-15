@@ -3,6 +3,7 @@ export type CouponResult = "success" | "rejected" | "error";
 export interface HistoryEntry {
   code: string;
   result?: CouponResult;
+  reason?: string;
 }
 
 export interface ExecutionPlan {
@@ -56,6 +57,8 @@ export interface DoneUpdate {
   result: CouponResult;
   code: string;
   code2?: string;
+  reason?: string;
+  reason2?: string;
   planUsed: boolean;
   inconsistent: boolean;
   run1Result?: CouponResult;
@@ -65,7 +68,15 @@ export interface PlanSavedUpdate {
   type: "PLAN_SAVED";
 }
 
-export type PortMessage = StatusUpdate | DoneUpdate | PlanSavedUpdate;
+export interface BatchDoneUpdate {
+  type: "BATCH_DONE";
+  tested: number;
+  good: number;
+  bad: number;
+  errors: number;
+}
+
+export type PortMessage = StatusUpdate | DoneUpdate | PlanSavedUpdate | BatchDoneUpdate;
 
 // ── Popup → Background ────────────────────────────────────────────────────
 
@@ -88,4 +99,15 @@ export interface GeneratePlanMessage {
 export interface CollectCouponsMessage {
   type: "COLLECT_COUPONS";
   hostname: string;
+}
+
+export interface TestCouponsMessage {
+  type: "TEST_COUPONS";
+  model: string;
+  tabId: number;
+  hostname: string;
+}
+
+export interface StopSessionMessage {
+  type: "STOP_SESSION";
 }

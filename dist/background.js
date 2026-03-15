@@ -4,6 +4,7 @@ const OLLAMA_URL = "http://localhost:11434";
 const MAX_ITERATIONS = 24;
 const MAX_HISTORY = 200;
 const PELANDO_BASE_URL = "https://www.pelando.com.br/cupons-de-descontos";
+const PELANDO_LIST_URL = "https://www.pelando.com.br/cupons-de-descontos";
 // ── Tool definitions sent to ollama ──────────────────────────────────────
 const TOOLS = [
     {
@@ -78,6 +79,7 @@ const TOOLS = [
 let activePort = null;
 let lastMessages = [];
 let lastInconsistency = null;
+let stopRequested = false;
 chrome.runtime.onConnect.addListener((port) => {
     if (port.name !== "ai-session")
         return;
@@ -91,10 +93,15 @@ function postStatus(message, level = "info") {
     console.log(`[Coupon Tester BG] [${level}] ${message}`);
     activePort?.postMessage({ type: "STATUS", message, level });
 }
-function postDone(result, code, code2, planUsed, inconsistent, run1Result) {
+function postDone(result, code, code2, planUsed, inconsistent, run1Result, reason, reason2) {
     console.log(`[Coupon Tester BG] Done — result: ${result}, code: ${code}, code2: ${code2}, planUsed: ${planUsed}, inconsistent: ${inconsistent}`);
     chrome.storage.session.set({ session_running: false });
-    activePort?.postMessage({ type: "DONE", result, code, code2, planUsed, inconsistent, run1Result });
+    activePort?.postMessage({ type: "DONE", result, code, code2, reason, reason2, planUsed, inconsistent, run1Result });
+}
+function postBatchDone(tested, good, bad, errors) {
+    console.log(`[Coupon Tester BG] Batch done — tested: ${tested}, good: ${good}, bad: ${bad}, errors: ${errors}`);
+    chrome.storage.session.set({ session_running: false });
+    activePort?.postMessage({ type: "BATCH_DONE", tested, good, bad, errors });
 }
 // ── Ensure content script is injected ────────────────────────────────────
 async function ensureContentScript(tabId) {
@@ -158,6 +165,10 @@ async function runSinglePass(model, couponCode, tabId, systemPrompt, runLabel) {
         { role: "user", content: `Please apply the coupon code "${couponCode}" on the current page.` },
     ];
     for (let i = 0; i < MAX_ITERATIONS; i++) {
+        if (stopRequested) {
+            postStatus(`${runLabel} Stopped by user.`, "warning");
+            return { result: "error", messages, reason: "Stopped by user." };
+        }
         postStatus(`${runLabel} Step ${i + 1} — asking model…`);
         const res = await fetch(`${OLLAMA_URL}/api/chat`, {
             method: "POST",
@@ -172,6 +183,7 @@ async function runSinglePass(model, couponCode, tabId, systemPrompt, runLabel) {
         console.log(`[Coupon Tester BG] ${runLabel} assistant →`, JSON.stringify(assistantMsg, null, 2));
         if (!assistantMsg.tool_calls || assistantMsg.tool_calls.length === 0) {
             const text = assistantMsg.content?.toLowerCase() ?? "";
+            const reason = assistantMsg.content?.trim();
             let result;
             if (text.includes("result: success")) {
                 result = "success";
@@ -198,9 +210,13 @@ async function runSinglePass(model, couponCode, tabId, systemPrompt, runLabel) {
             }
             const level = result === "success" ? "success" : result === "rejected" ? "warning" : "error";
             postStatus(`${runLabel} ${assistantMsg.content || "Done."}`, level);
-            return { result, messages };
+            return { result, messages, reason };
         }
         for (const toolCall of assistantMsg.tool_calls) {
+            if (stopRequested) {
+                postStatus(`${runLabel} Stopped by user.`, "warning");
+                return { result: "error", messages, reason: "Stopped by user." };
+            }
             const { name, arguments: args } = toolCall.function;
             postStatus(`${runLabel} Tool: ${name}${args?.selector ? ` → ${args.selector}` : ""}`);
             try {
@@ -216,11 +232,12 @@ async function runSinglePass(model, couponCode, tabId, systemPrompt, runLabel) {
         }
     }
     postStatus(`${runLabel} Reached max steps without a definitive answer.`, "warning");
-    return { result: "error", messages };
+    return { result: "error", messages, reason: "Reached max steps without definitive result." };
 }
 // ── Main AI session ───────────────────────────────────────────────────────
 async function runAiSession(msg) {
     const { model, couponCode, couponCode2, tabId, hostname, correctionNotes } = msg;
+    stopRequested = false;
     chrome.storage.session.set({ session_running: true });
     postStatus(`Starting session with model "${model}"…`);
     await ensureContentScript(tabId);
@@ -272,6 +289,7 @@ Critical rules:
 - Use query_dom to inspect HTML around the coupon input when get_page_info doesn't show the apply button.
 - Coupon fields and their buttons are often in iframes — check frameIdx in results.
 - After clicking apply, wait for get_page_text to show a result message (success or error). Look for phrases like "aplicado", "desconto", "inválido", "não encontrado", "applied", "invalid", "not found".
+- Some stores show only a toast/snackbar/alert instead of inline error text. Always check toast/alert/live regions using get_page_text and query_dom (e.g. [role='alert'], [aria-live], classes containing toast/snackbar).
 - Be concise and act — don't ask for confirmation.
 - End your final message with exactly one of: "RESULT: success", "RESULT: rejected", or "RESULT: error".
   Use "RESULT: success" when the coupon was accepted and a discount was applied.
@@ -283,7 +301,11 @@ Critical rules:
     if (pass1.result === "error") {
         lastMessages = pass1.messages;
         lastInconsistency = null;
-        postDone(pass1.result, couponCode, undefined, planUsed, false, undefined);
+        postDone(pass1.result, couponCode, undefined, planUsed, false, undefined, pass1.reason, undefined);
+        return;
+    }
+    if (stopRequested) {
+        postDone("error", couponCode, undefined, planUsed, false, undefined, "Stopped by user.", undefined);
         return;
     }
     postStatus("Run 2/2 — starting…");
@@ -294,7 +316,79 @@ Critical rules:
     if (inconsistent) {
         postStatus(`Results inconsistent — Run 1: ${pass1.result}, Run 2: ${pass2.result}`, "warning");
     }
-    postDone(pass2.result, couponCode, couponCode2, planUsed, inconsistent, pass1.result);
+    postDone(pass2.result, couponCode, couponCode2, planUsed, inconsistent, pass1.result, pass2.reason, pass1.reason);
+}
+async function runCouponBatch(msg) {
+    const { model, tabId, hostname } = msg;
+    stopRequested = false;
+    chrome.storage.session.set({ session_running: true });
+    await ensureContentScript(tabId);
+    const planStorageKey = `${PLANS_KEY_PREFIX}${hostname}`;
+    const planData = await chrome.storage.local.get(planStorageKey);
+    const savedPlans = planData[planStorageKey] ?? [];
+    if (savedPlans.length === 0) {
+        throw new Error("No saved plan for this website. Build a plan first.");
+    }
+    const historyStorageKey = `coupon_history_${hostname}`;
+    const existingData = await chrome.storage.local.get(historyStorageKey);
+    const history = existingData[historyStorageKey] ?? [];
+    const pending = history.filter((h) => h.result === undefined);
+    if (pending.length === 0) {
+        postBatchDone(0, 0, 0, 0);
+        return;
+    }
+    const systemPrompt = `You are a browser automation assistant helping test coupon codes on e-commerce websites.
+
+Selectors use the format "frameIdx:cssSelector" — always pass them as-is to fill_input and click_element.
+Buttons have a "disabled" field — fill the input first, then click the apply button (it may become enabled after filling).
+
+Use this verified execution plan for this website:
+
+--- SAVED PLAN ---
+${savedPlans[0].plan}
+--- END PLAN ---
+
+Rules:
+- Follow the plan strictly and adapt only if the page changed slightly.
+- NEVER click buttons that place/confirm an order.
+- Some stores only show toast/snackbar/alert feedback; inspect get_page_text and query_dom for [role='alert'], [aria-live], toast/snackbar containers.
+- End your final message with exactly one of: "RESULT: success", "RESULT: rejected", or "RESULT: error".
+  Use "RESULT: success" when coupon accepted with discount.
+  Use "RESULT: rejected" when coupon submitted but rejected by store.
+  Use "RESULT: error" when you cannot complete automation or determine result.`;
+    let good = 0;
+    let bad = 0;
+    let errors = 0;
+    for (let i = 0; i < pending.length; i++) {
+        if (stopRequested) {
+            postStatus("Coupon batch stopped by user.", "warning");
+            break;
+        }
+        const code = pending[i].code;
+        postStatus(`Testing coupon ${i + 1}/${pending.length}: ${code}`, "info");
+        const pass = await runSinglePass(model, code, tabId, systemPrompt, `[TEST ${i + 1}/${pending.length}]`);
+        const result = pass.result;
+        if (result === "success")
+            good += 1;
+        else if (result === "rejected")
+            bad += 1;
+        else
+            errors += 1;
+        for (const entry of history) {
+            if (entry.code === code) {
+                entry.result = result;
+                if (result === "rejected" || result === "error") {
+                    entry.reason = pass.reason;
+                }
+                else {
+                    delete entry.reason;
+                }
+                break;
+            }
+        }
+        await chrome.storage.local.set({ [historyStorageKey]: history.slice(0, MAX_HISTORY) });
+    }
+    postBatchDone(pending.length, good, bad, errors);
 }
 // ── Plan generation ───────────────────────────────────────────────────────
 const PLANS_KEY_PREFIX = "execution_plans_";
@@ -353,46 +447,116 @@ function normalizePelandoSlug(hostname) {
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/^-+|-+$/g, "");
 }
-function decodeHtmlEntities(input) {
-    return input
-        .replace(/&quot;/g, '"')
-        .replace(/&#34;/g, '"')
-        .replace(/&#39;/g, "'")
-        .replace(/&amp;/g, "&")
-        .replace(/&lt;/g, "<")
-        .replace(/&gt;/g, ">");
+async function waitForTabComplete(tabId, timeoutMs = 20000) {
+    await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+            chrome.tabs.onUpdated.removeListener(listener);
+            reject(new Error(`Timed out waiting for Pelando tab load (${timeoutMs}ms).`));
+        }, timeoutMs);
+        const listener = (updatedTabId, info) => {
+            if (updatedTabId !== tabId)
+                return;
+            if (info.status === "complete") {
+                clearTimeout(timeout);
+                chrome.tabs.onUpdated.removeListener(listener);
+                resolve();
+            }
+        };
+        chrome.tabs.onUpdated.addListener(listener);
+    });
 }
-function extractMaskedCoupons(html) {
-    const out = new Set();
-    const regex = /data-masked\s*=\s*(["'])(.*?)\1/gi;
-    let match;
-    while ((match = regex.exec(html)) !== null) {
-        const code = decodeHtmlEntities(match[2]).trim().toUpperCase();
-        if (code.length >= 4 && code.length <= 40 && /^[A-Z0-9-]+$/.test(code)) {
-            out.add(code);
+function normalizeHostBase(hostname) {
+    return hostname
+        .toLowerCase()
+        .replace(/^www\./, "")
+        .replace(/\.(com|com\.br|net|org|store|shop|io|co|biz|info)$/g, "");
+}
+function normalizeSlugKey(input) {
+    return input.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+async function withHiddenTab(url, fn) {
+    const tab = await chrome.tabs.create({ url, active: false });
+    if (!tab.id)
+        throw new Error(`Could not open tab for ${url}`);
+    const tabId = tab.id;
+    try {
+        await waitForTabComplete(tabId);
+        await new Promise((r) => setTimeout(r, 1200));
+        return await fn(tabId);
+    }
+    finally {
+        try {
+            await chrome.tabs.remove(tabId);
+        }
+        catch { /* ignore */ }
+    }
+}
+async function resolvePelandoStoreUrl(hostname) {
+    const fallback = `${PELANDO_BASE_URL}/${normalizePelandoSlug(hostname)}`;
+    const targetKey = normalizeSlugKey(normalizeHostBase(hostname));
+    try {
+        const response = await withHiddenTab(PELANDO_LIST_URL, async (tabId) => {
+            return await chrome.tabs.sendMessage(tabId, { type: "SCRAPE_PELANDO_STORE_LINKS" });
+        });
+        const links = response?.links ?? [];
+        if (links.length === 0)
+            return fallback;
+        let best = null;
+        for (const link of links) {
+            let slug = "";
+            try {
+                const u = new URL(link);
+                slug = u.pathname.replace(/^\/cupons-de-descontos\/?/, "").replace(/\/$/, "");
+            }
+            catch {
+                continue;
+            }
+            if (!slug)
+                continue;
+            const key = normalizeSlugKey(slug);
+            let score = 0;
+            if (key === targetKey)
+                score = 100;
+            else if (key.includes(targetKey) || targetKey.includes(key))
+                score = 80;
+            else {
+                const prefixLen = [...key].findIndex((ch, i) => ch !== targetKey[i]);
+                score = prefixLen === -1 ? Math.min(key.length, targetKey.length) : prefixLen;
+            }
+            if (!best || score > best.score) {
+                best = { url: link, score };
+            }
+        }
+        if (best && best.score >= 80) {
+            return best.url;
         }
     }
-    // Fallback for pages where the code appears in visible link text, e.g. "Pegar cupom ABC123".
-    const visibleCodeRegex = /(?:pegar\s+cupom|cupom(?:\s+de\s+desconto)?)[\s:]+([a-z0-9-]{4,40})/gi;
-    while ((match = visibleCodeRegex.exec(html)) !== null) {
-        const code = decodeHtmlEntities(match[1]).trim().toUpperCase();
-        if (/^[A-Z0-9-]+$/.test(code)) {
-            out.add(code);
-        }
+    catch (err) {
+        console.warn("[Coupon Tester BG] Failed to resolve Pelando store URL from list:", err);
     }
-    return Array.from(out);
+    return fallback;
+}
+async function collectCouponsFromPelandoPage(sourceUrl) {
+    return withHiddenTab(sourceUrl, async (tabId) => {
+        const response = await chrome.tabs.sendMessage(tabId, { type: "SCRAPE_PELANDO_COUPONS" });
+        if (!response || !Array.isArray(response.codes)) {
+            throw new Error("Could not read coupon data from Pelando page.");
+        }
+        return response.codes;
+    });
 }
 async function collectCoupons(msg) {
     const { hostname } = msg;
-    const slug = normalizePelandoSlug(hostname);
-    const sourceUrl = `${PELANDO_BASE_URL}/${slug}`;
-    postStatus(`Collecting coupons from Pelando for ${hostname}…`, "info");
-    const res = await fetch(sourceUrl);
-    if (!res.ok) {
-        throw new Error(`Pelando returned HTTP ${res.status} for ${sourceUrl}`);
+    stopRequested = false;
+    const sourceUrl = await resolvePelandoStoreUrl(hostname);
+    postStatus(`Collecting coupons from Pelando for ${hostname} (${sourceUrl})…`, "info");
+    if (stopRequested) {
+        throw new Error("Stopped by user.");
     }
-    const html = await res.text();
-    const codes = extractMaskedCoupons(html);
+    const codes = await collectCouponsFromPelandoPage(sourceUrl);
+    if (stopRequested) {
+        throw new Error("Stopped by user.");
+    }
     if (codes.length === 0) {
         return { added: 0, totalFound: 0, sourceUrl };
     }
@@ -457,6 +621,24 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             sendResponse({ ok: false, error: errText });
         });
         return true;
+    }
+    if (message.type === "TEST_COUPONS") {
+        runCouponBatch(message)
+            .then(() => sendResponse({ ok: true }))
+            .catch((err) => {
+            console.error("[Coupon Tester BG]", err);
+            chrome.storage.session.set({ session_running: false });
+            postStatus(`Coupon testing failed: ${String(err)}`, "error");
+            postBatchDone(0, 0, 0, 1);
+            sendResponse({ ok: false, error: String(err) });
+        });
+        return true;
+    }
+    if (message.type === "STOP_SESSION") {
+        stopRequested = true;
+        postStatus("Stopping current operation...", "warning");
+        sendResponse({ ok: true });
+        return false;
     }
     return false;
 });

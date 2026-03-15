@@ -119,6 +119,14 @@
     "message": "Coletar Cupões",
     "description": "Botão para coletar cupões do Pelando para o site atual"
   },
+  "buildPlan": {
+    "message": "Construir Plano",
+    "description": "Botão para criar ou refinar o plano de execução"
+  },
+  "testCoupons": {
+    "message": "Testar Cupões",
+    "description": "Botão para testar todos os cupões coletados"
+  },
   "testRun": {
     "message": "TEST RUN",
     "description": "Botão para executar o teste de cupão com IA"
@@ -138,5 +146,27 @@
   "statusCollectCouponsError": {
     "message": "Falha ao coletar cupões do Pelando.",
     "description": "Estado mostrado quando a recolha de cupões falha"
+  },
+  "statusTestingCoupons": {
+    "message": "A testar cupões coletados...",
+    "description": "Estado durante o teste em lote dos cupões coletados"
+  },
+  "statusTestCouponsDone": {
+    "message": "Lote concluído: testados $1, bons $2, maus $3, erros $4.",
+    "description": "Estado após testar cupões em lote",
+    "placeholders": {
+      "1": { "content": "$1" },
+      "2": { "content": "$2" },
+      "3": { "content": "$3" },
+      "4": { "content": "$4" }
+    }
+  },
+  "stopRun": {
+    "message": "Parar",
+    "description": "Tooltip para o botão de parar execução atual"
+  },
+  "statusStopping": {
+    "message": "A parar operação atual...",
+    "description": "Estado enquanto o utilizador pede para parar"
   }
 }
