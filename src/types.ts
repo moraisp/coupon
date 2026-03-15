@@ -76,7 +76,16 @@ export interface BatchDoneUpdate {
   errors: number;
 }
 
-export type PortMessage = StatusUpdate | DoneUpdate | PlanSavedUpdate | BatchDoneUpdate;
+export interface CouponTestedUpdate {
+  type: "COUPON_TESTED";
+  code: string;
+  result: CouponResult;
+  reason?: string;
+  tested: number;
+  total: number;
+}
+
+export type PortMessage = StatusUpdate | DoneUpdate | PlanSavedUpdate | BatchDoneUpdate | CouponTestedUpdate;
 
 // ── Popup → Background ────────────────────────────────────────────────────
 
@@ -99,6 +108,7 @@ export interface GeneratePlanMessage {
 export interface CollectCouponsMessage {
   type: "COLLECT_COUPONS";
   hostname: string;
+  storeName?: string;
 }
 
 export interface TestCouponsMessage {

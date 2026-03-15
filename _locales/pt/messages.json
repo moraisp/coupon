@@ -119,6 +119,14 @@
     "message": "Coletar Cupões",
     "description": "Botão para coletar cupões do Pelando para o site atual"
   },
+  "storeName": {
+    "message": "Nome da Loja",
+    "description": "Rótulo para o nome editável da loja usado para resolver páginas do Pelando"
+  },
+  "storeNamePlaceholder": {
+    "message": "Nome da loja no Pelando",
+    "description": "Placeholder para o campo editável do nome da loja"
+  },
   "buildPlan": {
     "message": "Construir Plano",
     "description": "Botão para criar ou refinar o plano de execução"

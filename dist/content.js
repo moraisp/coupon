@@ -238,7 +238,8 @@ function scrapePelandoCoupons() {
     return { codes: Array.from(codes), title: document.title, url: location.href };
 }
 function scrapePelandoStoreLinks() {
-    const links = new Set();
+    const seen = new Set();
+    const links = [];
     const anchors = Array.from(document.querySelectorAll('a[href*="/cupons-de-descontos/"]'));
     anchors.forEach((a) => {
         const href = (a.getAttribute("href") ?? "").trim();
@@ -251,13 +252,21 @@ function scrapePelandoStoreLinks() {
             const slug = abs.pathname.replace(/^\/cupons-de-descontos\/?/, "").replace(/\/$/, "");
             if (!slug)
                 return;
-            links.add(abs.toString());
+            const url = abs.toString();
+            if (seen.has(url))
+                return;
+            seen.add(url);
+            links.push({
+                url,
+                slug,
+                text: (a.textContent ?? "").replace(/\s+/g, " ").trim(),
+            });
         }
         catch {
             // Ignore invalid hrefs.
         }
     });
-    return { links: Array.from(links), title: document.title, url: location.href };
+    return { links, title: document.title, url: location.href };
 }
 // ── Message listener ──────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {

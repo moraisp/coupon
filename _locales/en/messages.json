@@ -119,6 +119,14 @@
     "message": "Collect Coupons",
     "description": "Button to collect coupons from Pelando for current site"
   },
+  "storeName": {
+    "message": "Store Name",
+    "description": "Label for editable store name used to resolve Pelando store pages"
+  },
+  "storeNamePlaceholder": {
+    "message": "Store name on Pelando",
+    "description": "Placeholder for the editable store name field"
+  },
   "buildPlan": {
     "message": "Build Plan",
     "description": "Button to build or refine the execution plan"

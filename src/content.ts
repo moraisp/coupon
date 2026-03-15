@@ -272,8 +272,9 @@ function scrapePelandoCoupons(): { codes: string[]; title: string; url: string }
   return { codes: Array.from(codes), title: document.title, url: location.href };
 }
 
-function scrapePelandoStoreLinks(): { links: string[]; title: string; url: string } {
-  const links = new Set<string>();
+function scrapePelandoStoreLinks(): { links: Array<{ url: string; text: string; slug: string }>; title: string; url: string } {
+  const seen = new Set<string>();
+  const links: Array<{ url: string; text: string; slug: string }> = [];
   const anchors = Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href*="/cupons-de-descontos/"]'));
 
   anchors.forEach((a) => {
@@ -284,13 +285,20 @@ function scrapePelandoStoreLinks(): { links: string[]; title: string; url: strin
       if (!abs.pathname.startsWith("/cupons-de-descontos/")) return;
       const slug = abs.pathname.replace(/^\/cupons-de-descontos\/?/, "").replace(/\/$/, "");
       if (!slug) return;
-      links.add(abs.toString());
+      const url = abs.toString();
+      if (seen.has(url)) return;
+      seen.add(url);
+      links.push({
+        url,
+        slug,
+        text: (a.textContent ?? "").replace(/\s+/g, " ").trim(),
+      });
     } catch {
       // Ignore invalid hrefs.
     }
   });
 
-  return { links: Array.from(links), title: document.title, url: location.href };
+  return { links, title: document.title, url: location.href };
 }
 
 // ── Message listener ──────────────────────────────────────────────────────

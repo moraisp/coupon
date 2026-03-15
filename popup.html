@@ -283,6 +283,28 @@
       font-size: 11px;
       padding: 2px 6px;
       border-radius: 999px;
+      position: relative;
+    }
+
+    #history-list li .badge.has-reason {
+      cursor: help;
+    }
+
+    #history-list li .badge.has-reason:hover::after {
+      content: attr(data-reason);
+      position: absolute;
+      right: 0;
+      top: calc(100% + 6px);
+      z-index: 10;
+      width: 180px;
+      padding: 6px 8px;
+      border-radius: 6px;
+      background: #111827;
+      color: white;
+      font-size: 11px;
+      line-height: 1.4;
+      white-space: normal;
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.18);
     }
 
     .badge.success {
@@ -435,6 +457,11 @@
         <option value="" disabled selected id="model-placeholder">Loading...</option>
       </select>
       <div id="model-status"></div>
+    </div>
+
+    <div class="model-row">
+      <label class="section-title" id="store-name-label" for="store-name-input">Store Name</label>
+      <input type="text" id="store-name-input" placeholder="Store name on Pelando" spellcheck="false" />
     </div>
 
     <div class="actions-row">

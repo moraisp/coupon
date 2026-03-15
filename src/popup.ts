@@ -13,6 +13,7 @@ const collectBtn     = document.getElementById("collect-btn")     as HTMLButtonE
 const testBtn        = document.getElementById("test-btn")        as HTMLButtonElement;
 const stopBtn        = document.getElementById("stop-btn")        as HTMLButtonElement;
 const modelSelect    = document.getElementById("model-select")    as HTMLSelectElement;
+const storeNameInput = document.getElementById("store-name-input") as HTMLInputElement;
 const modelStatus    = document.getElementById("model-status")    as HTMLDivElement;
 const feedbackRow    = document.getElementById("feedback-row")    as HTMLDivElement;
 const feedbackGood   = document.getElementById("feedback-good")   as HTMLButtonElement;
@@ -30,6 +31,7 @@ document.getElementById("history-title")!.textContent  = i18n("historyTitle");
 document.getElementById("feedback-label")!.textContent = i18n("feedbackLabel");
 document.getElementById("notes-label")!.textContent    = i18n("notesLabel");
 document.getElementById("plans-title")!.textContent    = i18n("plansTitle");
+document.getElementById("store-name-label")!.textContent = i18n("storeName");
 clearBtn.textContent      = i18n("clearHistory");
 clearPlansBtn.textContent = i18n("clearPlans");
 feedbackGood.textContent  = i18n("feedbackGood");
@@ -39,6 +41,7 @@ collectBtn.textContent    = i18n("collectCoupons");
 ollamaBtn.textContent     = i18n("buildPlan");
 testBtn.textContent       = i18n("testCoupons");
 stopBtn.title             = i18n("stopRun");
+storeNameInput.placeholder = i18n("storeNamePlaceholder");
 
 // ── Status ────────────────────────────────────────────────────────────────
 
@@ -69,6 +72,62 @@ async function getCurrentHostname(): Promise<string | null> {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.url) return null;
   try { return new URL(tab.url).hostname; } catch { return null; }
+}
+
+async function getCurrentTab(): Promise<chrome.tabs.Tab | null> {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  return tab ?? null;
+}
+
+function storeNameKey(hostname: string): string {
+  return `store_name_${hostname}`;
+}
+
+function guessStoreName(tab: chrome.tabs.Tab): string {
+  try {
+    if (tab.url) {
+      const hostname = new URL(tab.url).hostname
+        .replace(/^www\./, "")
+        .replace(/\.(com|com\.br|net|org|store|shop|io|co|biz|info)$/g, "")
+        .replace(/[-_]+/g, " ")
+        .trim();
+      if (hostname) return hostname;
+    }
+  } catch {
+    // Ignore URL parse failures.
+  }
+
+  return (tab.title ?? "").split(/[|\-–—:]/)[0]?.trim() ?? "";
+}
+
+async function loadStoreName(): Promise<void> {
+  const tab = await getCurrentTab();
+  if (!tab?.url) {
+    storeNameInput.value = "";
+    return;
+  }
+
+  let hostname: string | null = null;
+  try { hostname = new URL(tab.url).hostname; } catch { /* ignore */ }
+  if (!hostname) {
+    storeNameInput.value = "";
+    return;
+  }
+
+  const saved = await chrome.storage.local.get(storeNameKey(hostname));
+  const storeName = (saved[storeNameKey(hostname)] as string | undefined)?.trim();
+  storeNameInput.value = storeName || guessStoreName(tab);
+}
+
+async function saveStoreName(): Promise<void> {
+  const hostname = await getCurrentHostname();
+  if (!hostname) return;
+  const value = storeNameInput.value.trim();
+  if (value) {
+    await chrome.storage.local.set({ [storeNameKey(hostname)]: value });
+  } else {
+    await chrome.storage.local.remove(storeNameKey(hostname));
+  }
 }
 
 // ── Ollama model list ─────────────────────────────────────────────────────
@@ -115,6 +174,9 @@ async function loadModels(): Promise<void> {
 modelSelect.addEventListener("change", () => {
   if (modelSelect.value) chrome.storage.local.set({ [MODEL_KEY]: modelSelect.value });
 });
+
+storeNameInput.addEventListener("change", () => { void saveStoreName(); });
+storeNameInput.addEventListener("blur", () => { void saveStoreName(); });
 
 // ── History (per-site) ────────────────────────────────────────────────────
 
@@ -163,6 +225,8 @@ async function renderHistory(): Promise<void> {
       badge.textContent = badgeText;
       if ((entry.result === "rejected" || entry.result === "error") && entry.reason) {
         badge.title = entry.reason;
+        badge.classList.add("has-reason");
+        badge.setAttribute("data-reason", entry.reason);
       }
       li.append(code, badge);
     } else {
@@ -190,10 +254,17 @@ collectBtn.addEventListener("click", async () => {
   setStatus(i18n("statusCollectingCoupons"), "info");
 
   try {
-    const res = await chrome.runtime.sendMessage({ type: "COLLECT_COUPONS", hostname }) as {
+    await saveStoreName();
+
+    const res = await chrome.runtime.sendMessage({
+      type: "COLLECT_COUPONS",
+      hostname,
+      storeName: storeNameInput.value.trim() || undefined,
+    }) as {
       ok: boolean;
       added?: number;
       totalFound?: number;
+      storeName?: string;
       error?: string;
     };
 
@@ -203,6 +274,10 @@ collectBtn.addEventListener("click", async () => {
 
     const added = res.added ?? 0;
     const totalFound = res.totalFound ?? 0;
+    if (res.storeName) {
+      storeNameInput.value = res.storeName;
+      await saveStoreName();
+    }
     setStatus(i18n("statusCollectedCoupons", [String(added), String(totalFound)]), "success");
     await renderHistory();
   } catch (err) {
@@ -239,6 +314,9 @@ testBtn.addEventListener("click", async () => {
   port.onMessage.addListener((msg: PortMessage) => {
     if (msg.type === "STATUS") {
       setStatus(msg.message, msg.level);
+    } else if (msg.type === "COUPON_TESTED") {
+      setStatus(`Tested ${msg.tested}/${msg.total}: ${msg.code}`, msg.result === "success" ? "success" : msg.result === "rejected" ? "warning" : "error");
+      renderHistory();
     } else if (msg.type === "BATCH_DONE") {
       setStatus(i18n("statusTestCouponsDone", [String(msg.tested), String(msg.good), String(msg.bad), String(msg.errors)]), msg.errors > 0 ? "warning" : "success");
       renderHistory();
@@ -493,6 +571,9 @@ async function init(): Promise<void> {
     port.onMessage.addListener((msg: PortMessage) => {
       if (msg.type === "STATUS") {
         setStatus(msg.message, msg.level);
+      } else if (msg.type === "COUPON_TESTED") {
+        setStatus(`Tested ${msg.tested}/${msg.total}: ${msg.code}`, msg.result === "success" ? "success" : msg.result === "rejected" ? "warning" : "error");
+        renderHistory();
       } else if (msg.type === "DONE") {
         const hostname = (async () => {
           const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -529,6 +610,7 @@ async function init(): Promise<void> {
   }
 
   loadModels();
+  loadStoreName();
   renderHistory();
   renderPlans();
 }

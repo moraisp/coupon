@@ -126,6 +126,11 @@ function postBatchDone(tested: number, good: number, bad: number, errors: number
   activePort?.postMessage({ type: "BATCH_DONE", tested, good, bad, errors } as PortMessage);
 }
 
+function postCouponTested(code: string, result: CouponResult, reason: string | undefined, tested: number, total: number): void {
+  console.log(`[Coupon Tester BG] Coupon tested — ${code}: ${result}`);
+  activePort?.postMessage({ type: "COUPON_TESTED", code, result, reason, tested, total } as PortMessage);
+}
+
 // ── Ensure content script is injected ────────────────────────────────────
 
 async function ensureContentScript(tabId: number): Promise<void> {
@@ -439,6 +444,7 @@ Rules:
   let good = 0;
   let bad = 0;
   let errors = 0;
+  let completed = 0;
 
   for (let i = 0; i < pending.length; i++) {
     if (stopRequested) {
@@ -452,9 +458,15 @@ Rules:
     const pass = await runSinglePass(model, code, tabId, systemPrompt, `[TEST ${i + 1}/${pending.length}]`);
     const result = pass.result;
 
+    if (stopRequested || pass.reason === "Stopped by user.") {
+      postStatus(`Stopped while testing ${code}. Keeping it pending.`, "warning");
+      break;
+    }
+
     if (result === "success") good += 1;
     else if (result === "rejected") bad += 1;
     else errors += 1;
+    completed += 1;
 
     for (const entry of history) {
       if (entry.code === code) {
@@ -468,9 +480,10 @@ Rules:
       }
     }
     await chrome.storage.local.set({ [historyStorageKey]: history.slice(0, MAX_HISTORY) });
+    postCouponTested(code, result, pass.reason, completed, pending.length);
   }
 
-  postBatchDone(pending.length, good, bad, errors);
+  postBatchDone(completed, good, bad, errors);
 }
 
 // ── Plan generation ───────────────────────────────────────────────────────
@@ -571,7 +584,7 @@ interface PelandoScrapeResponse {
 }
 
 interface PelandoStoreLinksResponse {
-  links: string[];
+  links: Array<{ url: string; text: string; slug: string }>;
   title: string;
   url: string;
 }
@@ -584,6 +597,10 @@ function normalizeHostBase(hostname: string): string {
 }
 
 function normalizeSlugKey(input: string): string {
+  return input.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function normalizeStoreQuery(input: string): string {
   return input.toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
 
@@ -601,9 +618,16 @@ async function withHiddenTab<T>(url: string, fn: (tabId: number) => Promise<T>):
   }
 }
 
-async function resolvePelandoStoreUrl(hostname: string): Promise<string> {
+interface ResolvedPelandoStore {
+  sourceUrl: string;
+  storeName: string;
+}
+
+async function resolvePelandoStoreUrl(hostname: string, storeName?: string): Promise<ResolvedPelandoStore> {
   const fallback = `${PELANDO_BASE_URL}/${normalizePelandoSlug(hostname)}`;
-  const targetKey = normalizeSlugKey(normalizeHostBase(hostname));
+  const hostKey = normalizeSlugKey(normalizeHostBase(hostname));
+  const storeKey = storeName ? normalizeStoreQuery(storeName) : "";
+  const targetKey = storeKey || hostKey;
 
   try {
     const response = await withHiddenTab(PELANDO_LIST_URL, async (tabId) => {
@@ -611,41 +635,39 @@ async function resolvePelandoStoreUrl(hostname: string): Promise<string> {
     });
 
     const links = response?.links ?? [];
-    if (links.length === 0) return fallback;
+    if (links.length === 0) return { sourceUrl: fallback, storeName: storeName ?? normalizeHostBase(hostname) };
 
-    let best: { url: string; score: number } | null = null;
+    let best: { url: string; score: number; storeName: string } | null = null;
     for (const link of links) {
-      let slug = "";
-      try {
-        const u = new URL(link);
-        slug = u.pathname.replace(/^\/cupons-de-descontos\/?/, "").replace(/\/$/, "");
-      } catch {
-        continue;
-      }
-      if (!slug) continue;
+      const slugKey = normalizeSlugKey(link.slug);
+      const textKey = normalizeStoreQuery(link.text);
+      const candidates = [slugKey, textKey].filter(Boolean);
 
-      const key = normalizeSlugKey(slug);
       let score = 0;
-      if (key === targetKey) score = 100;
-      else if (key.includes(targetKey) || targetKey.includes(key)) score = 80;
-      else {
-        const prefixLen = [...key].findIndex((ch, i) => ch !== targetKey[i]);
-        score = prefixLen === -1 ? Math.min(key.length, targetKey.length) : prefixLen;
+      for (const candidate of candidates) {
+        if (candidate === targetKey) score = Math.max(score, 100);
+        else if (candidate.includes(targetKey) || targetKey.includes(candidate)) score = Math.max(score, 88);
+        else if (storeKey && hostKey && (candidate === storeKey || candidate === hostKey)) score = Math.max(score, 96);
       }
 
       if (!best || score > best.score) {
-        best = { url: link, score };
+        best = { url: link.url, score, storeName: link.text || link.slug };
       }
     }
 
-    if (best && best.score >= 80) {
-      return best.url;
+    if (best && best.score >= 88) {
+      return { sourceUrl: best.url, storeName: best.storeName };
+    }
+
+    if (storeName) {
+      throw new Error(`Could not match Pelando store for "${storeName}". Try the exact Pelando store name.`);
     }
   } catch (err) {
     console.warn("[Coupon Tester BG] Failed to resolve Pelando store URL from list:", err);
+    if (storeName) throw err;
   }
 
-  return fallback;
+  return { sourceUrl: fallback, storeName: storeName ?? normalizeHostBase(hostname) };
 }
 
 async function collectCouponsFromPelandoPage(sourceUrl: string): Promise<string[]> {
@@ -658,10 +680,11 @@ async function collectCouponsFromPelandoPage(sourceUrl: string): Promise<string[
   });
 }
 
-async function collectCoupons(msg: CollectCouponsMessage): Promise<{ added: number; totalFound: number; sourceUrl: string }> {
-  const { hostname } = msg;
+async function collectCoupons(msg: CollectCouponsMessage): Promise<{ added: number; totalFound: number; sourceUrl: string; storeName: string }> {
+  const { hostname, storeName } = msg;
   stopRequested = false;
-  const sourceUrl = await resolvePelandoStoreUrl(hostname);
+  const resolved = await resolvePelandoStoreUrl(hostname, storeName);
+  const { sourceUrl } = resolved;
 
   postStatus(`Collecting coupons from Pelando for ${hostname} (${sourceUrl})…`, "info");
 
@@ -674,7 +697,7 @@ async function collectCoupons(msg: CollectCouponsMessage): Promise<{ added: numb
     throw new Error("Stopped by user.");
   }
   if (codes.length === 0) {
-    return { added: 0, totalFound: 0, sourceUrl };
+    return { added: 0, totalFound: 0, sourceUrl, storeName: resolved.storeName };
   }
 
   const historyStorageKey = `coupon_history_${hostname}`;
@@ -703,7 +726,7 @@ async function collectCoupons(msg: CollectCouponsMessage): Promise<{ added: numb
   });
 
   await chrome.storage.local.set({ [historyStorageKey]: merged.slice(0, MAX_HISTORY) });
-  return { added, totalFound: codes.length, sourceUrl };
+  return { added, totalFound: codes.length, sourceUrl, storeName: resolved.storeName };
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────
