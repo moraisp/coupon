@@ -2,6 +2,8 @@ import { installConsoleForwarder } from "./logger.js";
 installConsoleForwarder("background");
 const OLLAMA_URL = "http://localhost:11434";
 const MAX_ITERATIONS = 24;
+const MAX_HISTORY = 200;
+const PELANDO_BASE_URL = "https://www.pelando.com.br/cupons-de-descontos";
 // ── Tool definitions sent to ollama ──────────────────────────────────────
 const TOOLS = [
     {
@@ -342,6 +344,83 @@ async function generatePlan(msg) {
     postStatus("Plan saved!", "success");
     activePort?.postMessage({ type: "PLAN_SAVED" });
 }
+// ── Coupon collection (Phase 3) ─────────────────────────────────────────
+function normalizePelandoSlug(hostname) {
+    return hostname
+        .toLowerCase()
+        .replace(/^www\./, "")
+        .replace(/\.(com|com\.br|net|org|store|shop|io|co|biz|info)$/g, "")
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "");
+}
+function decodeHtmlEntities(input) {
+    return input
+        .replace(/&quot;/g, '"')
+        .replace(/&#34;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">");
+}
+function extractMaskedCoupons(html) {
+    const out = new Set();
+    const regex = /data-masked\s*=\s*(["'])(.*?)\1/gi;
+    let match;
+    while ((match = regex.exec(html)) !== null) {
+        const code = decodeHtmlEntities(match[2]).trim().toUpperCase();
+        if (code.length >= 4 && code.length <= 40 && /^[A-Z0-9-]+$/.test(code)) {
+            out.add(code);
+        }
+    }
+    // Fallback for pages where the code appears in visible link text, e.g. "Pegar cupom ABC123".
+    const visibleCodeRegex = /(?:pegar\s+cupom|cupom(?:\s+de\s+desconto)?)[\s:]+([a-z0-9-]{4,40})/gi;
+    while ((match = visibleCodeRegex.exec(html)) !== null) {
+        const code = decodeHtmlEntities(match[1]).trim().toUpperCase();
+        if (/^[A-Z0-9-]+$/.test(code)) {
+            out.add(code);
+        }
+    }
+    return Array.from(out);
+}
+async function collectCoupons(msg) {
+    const { hostname } = msg;
+    const slug = normalizePelandoSlug(hostname);
+    const sourceUrl = `${PELANDO_BASE_URL}/${slug}`;
+    postStatus(`Collecting coupons from Pelando for ${hostname}…`, "info");
+    const res = await fetch(sourceUrl);
+    if (!res.ok) {
+        throw new Error(`Pelando returned HTTP ${res.status} for ${sourceUrl}`);
+    }
+    const html = await res.text();
+    const codes = extractMaskedCoupons(html);
+    if (codes.length === 0) {
+        return { added: 0, totalFound: 0, sourceUrl };
+    }
+    const historyStorageKey = `coupon_history_${hostname}`;
+    const existingData = await chrome.storage.local.get(historyStorageKey);
+    const existing = existingData[historyStorageKey] ?? [];
+    const byCode = new Map();
+    for (const entry of existing) {
+        byCode.set(entry.code.toUpperCase(), entry);
+    }
+    let added = 0;
+    for (const code of codes) {
+        if (!byCode.has(code)) {
+            byCode.set(code, { code });
+            added += 1;
+        }
+    }
+    const merged = Array.from(byCode.values());
+    merged.sort((a, b) => {
+        const aPending = a.result === undefined;
+        const bPending = b.result === undefined;
+        if (aPending !== bPending)
+            return aPending ? -1 : 1;
+        return a.code.localeCompare(b.code);
+    });
+    await chrome.storage.local.set({ [historyStorageKey]: merged.slice(0, MAX_HISTORY) });
+    return { added, totalFound: codes.length, sourceUrl };
+}
 // ── Entry point ───────────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message.type === "RUN_AI") {
@@ -362,6 +441,20 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             console.error("[Coupon Tester BG]", err);
             postStatus(`Error generating plan: ${String(err)}`, "error");
             sendResponse({ ok: false, error: String(err) });
+        });
+        return true;
+    }
+    if (message.type === "COLLECT_COUPONS") {
+        collectCoupons(message)
+            .then((result) => {
+            postStatus(`Collection complete: ${result.added} new of ${result.totalFound} found.`, "success");
+            sendResponse({ ok: true, ...result });
+        })
+            .catch((err) => {
+            const errText = String(err);
+            console.error("[Coupon Tester BG]", err);
+            postStatus(`Collection failed: ${errText}`, "error");
+            sendResponse({ ok: false, error: errText });
         });
         return true;
     }

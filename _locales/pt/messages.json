@@ -114,5 +114,29 @@
   "ollamaNotRunning": {
     "message": "ollama não está em execução. Inicie com: ollama serve",
     "description": "Message when ollama is not reachable"
+  },
+  "collectCoupons": {
+    "message": "Coletar Cupões",
+    "description": "Botão para coletar cupões do Pelando para o site atual"
+  },
+  "testRun": {
+    "message": "TEST RUN",
+    "description": "Botão para executar o teste de cupão com IA"
+  },
+  "statusCollectingCoupons": {
+    "message": "A coletar cupões...",
+    "description": "Estado durante a recolha de cupões do Pelando"
+  },
+  "statusCollectedCoupons": {
+    "message": "Coletados $1 novos cupões ($2 encontrados).",
+    "description": "Estado após a recolha de cupões",
+    "placeholders": {
+      "1": { "content": "$1" },
+      "2": { "content": "$2" }
+    }
+  },
+  "statusCollectCouponsError": {
+    "message": "Falha ao coletar cupões do Pelando.",
+    "description": "Estado mostrado quando a recolha de cupões falha"
   }
 }

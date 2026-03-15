@@ -5,7 +5,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && tsc -p tsconfig.content.json",
     "watch": "tsc -p tsconfig.json --watch & tsc -p tsconfig.content.json --watch",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "logs": "python3 log-server.py"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.268",

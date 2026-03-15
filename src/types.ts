@@ -2,7 +2,7 @@ export type CouponResult = "success" | "rejected" | "error";
 
 export interface HistoryEntry {
   code: string;
-  result: CouponResult;
+  result?: CouponResult;
 }
 
 export interface ExecutionPlan {
@@ -82,5 +82,10 @@ export interface RunAiMessage {
 export interface GeneratePlanMessage {
   type: "GENERATE_PLAN";
   model: string;
+  hostname: string;
+}
+
+export interface CollectCouponsMessage {
+  type: "COLLECT_COUPONS";
   hostname: string;
 }

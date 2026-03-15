@@ -9,6 +9,9 @@
     "scripting",
     "storage"
   ],
+  "host_permissions": [
+    "https://www.pelando.com.br/*"
+  ],
   "action": {
     "default_popup": "popup.html",
     "default_icon": {

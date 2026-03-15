@@ -6,6 +6,7 @@ const historyList = document.getElementById("history-list");
 const historySection = document.getElementById("history-section");
 const clearBtn = document.getElementById("clear-btn");
 const ollamaBtn = document.getElementById("ollama-btn");
+const collectBtn = document.getElementById("collect-btn");
 const modelSelect = document.getElementById("model-select");
 const modelStatus = document.getElementById("model-status");
 const feedbackRow = document.getElementById("feedback-row");
@@ -28,6 +29,8 @@ clearPlansBtn.textContent = i18n("clearPlans");
 feedbackGood.textContent = i18n("feedbackGood");
 feedbackBad.textContent = i18n("feedbackBad");
 notesSubmit.textContent = i18n("notesSubmit");
+collectBtn.textContent = i18n("collectCoupons");
+ollamaBtn.textContent = i18n("testRun");
 function setStatus(msg, level = "info") {
     statusEl.textContent = msg;
     statusEl.className = level === "info" ? "" : level;
@@ -90,7 +93,7 @@ modelSelect.addEventListener("change", () => {
     if (modelSelect.value)
         chrome.storage.local.set({ [MODEL_KEY]: modelSelect.value });
 });
-const MAX_HISTORY = 10;
+const MAX_HISTORY = 200;
 function historyKey(hostname) { return `coupon_history_${hostname}`; }
 async function loadHistory(hostname) {
     const key = historyKey(hostname);
@@ -125,12 +128,17 @@ async function renderHistory() {
         const code = document.createElement("span");
         code.className = "code";
         code.textContent = entry.code;
-        const badge = document.createElement("span");
-        const badgeClass = entry.result === "success" ? "success" : entry.result === "rejected" ? "rejected" : "error";
-        const badgeText = entry.result === "success" ? "✓" : entry.result === "rejected" ? "✗" : "?";
-        badge.className = `badge ${badgeClass}`;
-        badge.textContent = badgeText;
-        li.append(code, badge);
+        if (entry.result) {
+            const badge = document.createElement("span");
+            const badgeClass = entry.result === "success" ? "success" : entry.result === "rejected" ? "rejected" : "error";
+            const badgeText = entry.result === "success" ? "✓" : entry.result === "rejected" ? "✗" : "?";
+            badge.className = `badge ${badgeClass}`;
+            badge.textContent = badgeText;
+            li.append(code, badge);
+        }
+        else {
+            li.append(code);
+        }
         historyList.appendChild(li);
     }
 }
@@ -139,6 +147,34 @@ clearBtn.addEventListener("click", async () => {
     if (hostname)
         await saveHistory(hostname, []);
     await renderHistory();
+});
+collectBtn.addEventListener("click", async () => {
+    const hostname = await getCurrentHostname();
+    if (!hostname) {
+        setStatus(i18n("statusError"), "error");
+        return;
+    }
+    hideFeedback();
+    hideNotes();
+    collectBtn.disabled = true;
+    setStatus(i18n("statusCollectingCoupons"), "info");
+    try {
+        const res = await chrome.runtime.sendMessage({ type: "COLLECT_COUPONS", hostname });
+        if (!res?.ok) {
+            throw new Error(res?.error ?? "Unknown collection error");
+        }
+        const added = res.added ?? 0;
+        const totalFound = res.totalFound ?? 0;
+        setStatus(i18n("statusCollectedCoupons", [String(added), String(totalFound)]), "success");
+        await renderHistory();
+    }
+    catch (err) {
+        console.error("[Coupon Tester] collect coupons failed:", err);
+        setStatus(i18n("statusCollectCouponsError"), "error");
+    }
+    finally {
+        collectBtn.disabled = false;
+    }
 });
 // ── Feedback row ──────────────────────────────────────────────────────────
 function showFeedback() { feedbackRow.classList.remove("hidden"); chrome.storage.session.set({ popup_feedback: true }); }
@@ -298,6 +334,7 @@ ollamaBtn.addEventListener("click", async () => {
     hideFeedback();
     hideNotes();
     ollamaBtn.disabled = true;
+    collectBtn.disabled = true;
     setStatus(i18n("statusApplying"), "info");
     // Pick up any correction notes left from a previous bad run, then clear them
     const notesKey = `correction_notes_${hostname}`;
@@ -313,11 +350,13 @@ ollamaBtn.addEventListener("click", async () => {
         else if (msg.type === "DONE") {
             handleDone(msg, hostname);
             ollamaBtn.disabled = false;
+            collectBtn.disabled = false;
             port.disconnect();
         }
     });
     port.onDisconnect.addListener(() => {
         ollamaBtn.disabled = false;
+        collectBtn.disabled = false;
     });
     chrome.runtime.sendMessage({ type: "RUN_AI", model, couponCode: code, couponCode2: code2, tabId: tab.id, hostname, correctionNotes: correctionNotes || undefined });
 });
@@ -339,6 +378,7 @@ async function init() {
     // Reconnect port if a session is still running
     if (saved.session_running === true) {
         ollamaBtn.disabled = true;
+        collectBtn.disabled = true;
         const port = chrome.runtime.connect({ name: "ai-session" });
         port.onMessage.addListener((msg) => {
             if (msg.type === "STATUS") {
@@ -352,6 +392,7 @@ async function init() {
                 hostname.then(h => { if (h)
                     handleDone(msg, h); });
                 ollamaBtn.disabled = false;
+                collectBtn.disabled = false;
                 port.disconnect();
             }
             else if (msg.type === "PLAN_SAVED") {
@@ -360,7 +401,10 @@ async function init() {
                 port.disconnect();
             }
         });
-        port.onDisconnect.addListener(() => { ollamaBtn.disabled = false; });
+        port.onDisconnect.addListener(() => {
+            ollamaBtn.disabled = false;
+            collectBtn.disabled = false;
+        });
     }
     loadModels();
     renderHistory();

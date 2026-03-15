@@ -114,5 +114,29 @@
   "ollamaNotRunning": {
     "message": "ollama is not running. Start it with: ollama serve",
     "description": "Message when ollama is not reachable"
+  },
+  "collectCoupons": {
+    "message": "Collect Coupons",
+    "description": "Button to collect coupons from Pelando for current site"
+  },
+  "testRun": {
+    "message": "TEST RUN",
+    "description": "Button to run the AI coupon test"
+  },
+  "statusCollectingCoupons": {
+    "message": "Collecting coupons...",
+    "description": "Status while collecting coupons from Pelando"
+  },
+  "statusCollectedCoupons": {
+    "message": "Collected $1 new coupons ($2 found).",
+    "description": "Status after coupon collection",
+    "placeholders": {
+      "1": { "content": "$1" },
+      "2": { "content": "$2" }
+    }
+  },
+  "statusCollectCouponsError": {
+    "message": "Failed to collect coupons from Pelando.",
+    "description": "Status shown when coupon collection fails"
   }
 }
